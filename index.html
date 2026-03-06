@@ -292,6 +292,7 @@
   <script src="https://unpkg.com/framer-motion@11/dist/framer-motion.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 </head>
 
 <body>
@@ -376,31 +377,74 @@
         }
       }, [isOpen]);
 
+      const loadRazorpay = () => {
+        return new Promise((resolve) => {
+          const script = document.createElement("script");
+          script.src = "https://checkout.razorpay.com/v1/checkout.js";
+          script.onload = () => resolve(true);
+          script.onerror = () => resolve(false);
+          document.body.appendChild(script);
+        });
+      };
+
       const handleSubmit = async (e) => {
         e.preventDefault();
         setLoading(true);
 
         try {
-          const orderPayload = cart.map(item => ({
-            name: formData.name,
-            email: formData.email,
-            product: item.name,
-            quantity: parseInt(item.qty),
-            price: parseInt(item.price.replace(/[^\d.]/g, ''))
-          }));
+          const res = await loadRazorpay();
+          if (!res) throw new Error("Razorpay SDK failed to load");
 
-          const result = await placeOrders(orderPayload);
-          if (!result.success) throw result.error;
+          // For this implementation, we simulate taking the first item for description.
+          // True multi-item cart requires backend order generation for Razorpay.
+          const orderProductName = cart.map(item => item.name).join(", ");
 
-          setIsSuccess(true);
-          onSuccess(); // Clear the cart
+          const options = {
+            key: "RAZORPAY_KEY",
+            amount: total * 100, // Razorpay works in smallest currency unit (paise)
+            currency: "INR",
+            name: "Layered",
+            description: "3D Printed Product",
+            theme: { color: "#000000" },
+            prefill: {
+              name: formData.name,
+              email: formData.email,
+            },
+            handler: async function (response) {
+              try {
+                // Post-payment success: save to DB
+                console.log("Payment successful:", response.razorpay_payment_id);
 
-          // Show thank you message for 5 seconds for a premium feel
-          setTimeout(() => {
-            onClose();
-          }, 5000);
+                const orderPayload = cart.map(item => ({
+                  product_name: item.name,
+                  price: parseFloat(item.price.replace(/[^\d.]/g, '')),
+                  razorpay_payment_id: response.razorpay_payment_id,
+                }));
+
+                const { error } = await supabase.from('orders').insert(orderPayload);
+                if (error) throw error;
+
+                setIsSuccess(true);
+                onSuccess();
+
+                setTimeout(() => { onClose(); }, 5000);
+              } catch (dbErr) {
+                console.error("Failed to save order:", dbErr);
+                alert("Payment captured, but order saving failed. Please contact support.");
+              }
+            },
+          };
+
+          const paymentObject = new window.Razorpay(options);
+
+          paymentObject.on('payment.failed', function (response) {
+            alert("Payment Failed: " + response.error.description);
+          });
+
+          paymentObject.open();
+
         } catch (err) {
-          alert("Network Error: " + err.message);
+          alert("Error initializing payment: " + err.message);
         } finally {
           setLoading(false);
         }
@@ -457,7 +501,7 @@
                           transition={{ delay: 0.5 }}
                           className="text-brand-gray text-[10px] uppercase tracking-[0.3em] font-medium leading-loose"
                         >
-                          For collecting from <span className="text-brand-purple underline decoration-brand-purple/30 underline-offset-4">Layered Studio</span>. <br /> Your specimens are being prepared.
+                          Payment successful. <br /> Your order has been received.
                         </motion.p>
                       </div>
 
