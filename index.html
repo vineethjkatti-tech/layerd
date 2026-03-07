@@ -1148,10 +1148,10 @@
               <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
                 <button
                   onClick={() => document.getElementById('objects').scrollIntoView({ behavior: 'smooth' })}
-                  className="btn-primary px-12 py-5 rounded-2xl font-bold uppercase tracking-widest text-xs flex items-center justify-center gap-3 group transition-all"
+                  className="btn-primary px-12 py-5 rounded-2xl font-bold uppercase tracking-widest text-xs flex items-center justify-center gap-3 transition-all group overflow-hidden"
                 >
                   Explore Collection
-                  <CustomIcon name="package" size={16} />
+                  <CustomIcon name="package" size={16} className="text-black group-hover:text-black group-hover:translate-x-1 transition-all duration-300" />
                 </button>
               </div>
             </Reveal>
@@ -2417,6 +2417,5 @@
     root.render(<App />);
   </script>
 </body>
-
 
 </html>
