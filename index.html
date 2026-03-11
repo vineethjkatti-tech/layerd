@@ -371,6 +371,7 @@
 
   <script type="text/babel">
     const { useState, useEffect, useRef, useMemo } = React;
+    const Motion = window.Motion || {};
     const { motion, AnimatePresence } = Motion;
 
     const supabaseUrl = window.SUPABASE_URL || "https://kdqhjcncsskyxtfhnkev.supabase.co";
@@ -486,6 +487,26 @@
 
                 const { error } = await supabase.from('orders').insert(orderPayload);
                 if (error) throw error;
+
+                // Update stock for each purchased item
+                for (const item of cart) {
+                  const { data: productData } = await supabase
+                    .from("product_stock")
+                    .select("stock")
+                    .eq("product_name", item.name)
+                    .single();
+
+                  if (productData) {
+                    const newStock = Math.max(productData.stock - item.qty, 0);
+                    await supabase
+                      .from("product_stock")
+                      .update({
+                        stock: newStock,
+                        updated_at: new Date()
+                      })
+                      .eq("product_name", item.name);
+                  }
+                }
 
                 setIsSuccess(true);
                 onSuccess();
@@ -939,7 +960,7 @@
 
     // Navbar component moved to end of file with updated routes
 
-    const CartSidebar = ({ items, isOpen, onClose, onUpdateQty, onRemove, onCheckout, total }) => {
+    const CartSidebar = ({ items, isOpen, onClose, onUpdateQty, onRemove, onCheckout, total, stockMap = {} }) => {
       return (
         <AnimatePresence>
           {isOpen && (
@@ -1014,8 +1035,16 @@
                               </button>
                               <span className="w-8 text-center text-xs font-mono font-bold">{item.qty}</span>
                               <button
-                                onClick={() => onUpdateQty(item.id, item.qty + 1)}
-                                className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-white/5 transition-colors"
+                                onClick={() => {
+                                  const availableStock = stockMap[item.name];
+                                  if (availableStock !== undefined && item.qty >= availableStock) {
+                                    alert("Maximum available stock reached");
+                                    return;
+                                  }
+                                  onUpdateQty(item.id, item.qty + 1);
+                                }}
+                                disabled={stockMap[item.name] !== undefined && item.qty >= stockMap[item.name]}
+                                className={`w-7 h-7 flex items-center justify-center rounded-md transition-colors ${stockMap[item.name] !== undefined && item.qty >= stockMap[item.name] ? 'opacity-30 cursor-not-allowed' : 'hover:bg-white/5'}`}
                               >
                                 <CustomIcon name="plus" size={12} />
                               </button>
@@ -1059,7 +1088,18 @@
 
     const ProductModal = ({ product, onClose, onAddToCart }) => {
       const [added, setAdded] = useState(false);
+      const [currentImage, setCurrentImage] = useState(0);
       if (!product) return null;
+
+      const images = [product.image_url, product.image2_url].filter(Boolean);
+
+      const nextImage = () => {
+        setCurrentImage((prev) => (prev + 1) % images.length);
+      };
+
+      const prevImage = () => {
+        setCurrentImage((prev) => (prev - 1 + images.length) % images.length);
+      };
 
       const handleAdd = () => {
         onAddToCart(product);
@@ -1093,12 +1133,38 @@
                 <div className="w-40 h-40 md:w-52 md:h-52 relative">
                   <div className="absolute inset-0 bg-brand-purple/20 blur-[60px] rounded-full"></div>
                   <div className="relative z-10 w-full h-full flex items-center justify-center overflow-hidden rounded-2xl border border-white/5">
-                    {product.image_url ? (
-                      <img
-                        src={product.image_url}
-                        alt={product.name}
-                        className="w-full h-full object-cover"
-                      />
+                    {images.length > 0 ? (
+                      <div className="relative w-full h-full overflow-hidden">
+                        {images.length > 1 && (
+                          <>
+                            <button
+                              onClick={prevImage}
+                              className="absolute left-3 top-1/2 -translate-y-1/2 z-10 bg-black/60 text-white w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 hover:bg-black hover:scale-110 active:scale-95"
+                            >
+                              ←
+                            </button>
+                            <button
+                              onClick={nextImage}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 z-10 bg-black/60 text-white w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 hover:bg-black hover:scale-110 active:scale-95"
+                            >
+                              →
+                            </button>
+                          </>
+                        )}
+                        <div
+                          className="flex transition-transform duration-500 ease-in-out h-full"
+                          style={{ transform: `translateX(-${currentImage * 100}%)` }}
+                        >
+                          {images.map((img, idx) => (
+                            <img
+                              key={idx}
+                              src={img}
+                              alt={product.name}
+                              className="w-full h-full object-cover flex-shrink-0"
+                            />
+                          ))}
+                        </div>
+                      </div>
                     ) : (
                       <CustomIcon name="package" size={100} className="text-white opacity-20" />
                     )}
@@ -1225,7 +1291,7 @@
       );
     };
 
-    const ProductSection = ({ onSelectProduct, limit = null, title = "Featured" }) => {
+    const ProductSection = ({ onSelectProduct, limit = null, title = "Featured", stockMap = {} }) => {
       const [products, setProducts] = useState([]);
       const [loading, setLoading] = useState(true);
       const [error, setError] = useState(null);
@@ -1321,9 +1387,23 @@
                     <div>
                       <div className="flex justify-between items-start mb-2 gap-4">
                         <h3 className="text-lg font-bold group-hover:text-brand-purple transition-colors uppercase tracking-tight line-clamp-1">{p.name}</h3>
-                        <span className="text-xs font-mono font-bold text-brand-purple whitespace-nowrap">
-                          ₹{parseFloat(p.price).toLocaleString('en-IN')}
-                        </span>
+                        <div className="text-right">
+                          <span className="text-xs font-mono font-bold text-brand-purple whitespace-nowrap">
+                            ₹{parseFloat(p.price).toLocaleString('en-IN')}
+                          </span>
+                          {stockMap[p.name] === undefined && (
+                            <p className="text-gray-400 text-[10px]">Stock unavailable</p>
+                          )}
+                          {stockMap[p.name] > 5 && (
+                            <p className="text-green-600 text-[10px]">In Stock ({stockMap[p.name]})</p>
+                          )}
+                          {stockMap[p.name] > 0 && stockMap[p.name] <= 5 && (
+                            <p className="text-orange-500 text-[10px]">Only {stockMap[p.name]} left</p>
+                          )}
+                          {stockMap[p.name] === 0 && (
+                            <p className="text-red-500 text-[10px]">Out of Stock</p>
+                          )}
+                        </div>
                       </div>
                       <p className="text-brand-gray text-[11px] leading-relaxed mb-4 line-clamp-2">{p.description}</p>
                     </div>
@@ -2327,6 +2407,7 @@
       const [cart, setCart] = useState([]);
       const [isCartOpen, setIsCartOpen] = useState(false);
       const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+      const [stockMap, setStockMap] = useState({});
 
       useEffect(() => {
         supabase.auth.getSession().then(({ data: { session } }) => {
@@ -2338,6 +2419,24 @@
         });
 
         return () => subscription.unsubscribe();
+      }, []);
+
+      // Fetch stock data on mount
+      useEffect(() => {
+        const fetchStock = async () => {
+          const { data } = await supabase
+            .from("product_stock")
+            .select("product_name, stock");
+          
+          if (data) {
+            const map = {};
+            data.forEach((item) => {
+              map[item.product_name] = item.stock;
+            });
+            setStockMap(map);
+          }
+        };
+        fetchStock();
       }, []);
 
       const handleSetView = (newView) => {
@@ -2357,16 +2456,41 @@
 
 
       const addToCart = (product) => {
+        const availableStock = stockMap[product.name];
+        
+        // If stock is defined and is 0, cannot add
+        if (availableStock !== undefined && availableStock <= 0) {
+          alert("This item is out of stock");
+          return;
+        }
+        
         setCart(prev => {
           const existing = prev.find(item => item.id === product.id);
           if (existing) {
+            // Check if already at max stock
+            if (availableStock !== undefined && existing.qty >= availableStock) {
+              alert("Maximum available stock reached");
+              return prev;
+            }
             return prev.map(item => item.id === product.id ? { ...item, qty: item.qty + 1 } : item);
           }
-          return [...prev, { ...product, qty: 1 }];
+          // New item - start with qty 1 (or less if stock is low)
+          const initialQty = (availableStock !== undefined && availableStock < 1) ? availableStock : 1;
+          return [...prev, { ...product, qty: initialQty }];
         });
       };
 
       const updateQty = (id, qty) => {
+        const item = cart.find(i => i.id === id);
+        if (item) {
+          const availableStock = stockMap[item.name];
+          // Prevent exceeding stock
+          if (availableStock !== undefined && qty > availableStock) {
+            alert("Maximum available stock reached");
+            return;
+          }
+          if (qty < 1) qty = 1;
+        }
         setCart(prev => prev.map(item => item.id === id ? { ...item, qty } : item));
       };
 
@@ -2395,12 +2519,12 @@
               {view === 'home' && (
                 <>
                   <Hero />
-                  <ProductSection onSelectProduct={setSelectedProduct} limit={4} title="Featured" />
+                  <ProductSection onSelectProduct={setSelectedProduct} limit={4} title="Featured" stockMap={stockMap} />
                   <Values />
                   <ContactSection />
                 </>
               )}
-              {view === 'prints' && <ProductSection onSelectProduct={setSelectedProduct} title="Catalog" />}
+              {view === 'prints' && <ProductSection onSelectProduct={setSelectedProduct} title="Catalog" stockMap={stockMap} />}
               {view === 'about' && <AboutUs />}
               {view === 'custom' && <CustomPrintView setView={handleSetView} />}
               {view === 'privacy' && <PrivacyPolicyView />}
@@ -2462,6 +2586,7 @@
             total={totalPrice}
             onUpdateQty={updateQty}
             onRemove={removeFromCart}
+            stockMap={stockMap}
             onCheckout={() => {
               setIsCartOpen(false);
               setIsCheckoutOpen(true);
