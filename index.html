@@ -373,6 +373,7 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useMemo } = React;
     const shapeAnimation = { phase: 'idle', fallProgress: 0 };
+    const shapeImpulse = { x: 0, y: 0 };
     const Motion = window.Motion || {};
     const { motion, AnimatePresence } = Motion;
 
@@ -858,9 +859,12 @@ if (shapeAnimation.phase === 'falling') {
   shapeAnimation.fallProgress = Math.min(shapeAnimation.fallProgress + 0.018, 1);
 }
 
+shapeImpulse.x *= 0.92;
+shapeImpulse.y *= 0.92;
+
 shapes.forEach(({ mesh, wf, sx, sy }, i) => {
-  mesh.rotation.x += sx;
-  mesh.rotation.y += sy;
+  mesh.rotation.x += sx + shapeImpulse.y;
+  mesh.rotation.y += sy + shapeImpulse.x;
 
   if (shapeAnimation.phase === 'idle') {
     mesh.position.y += Math.sin(t * 0.7 + i * 0.4) * 0.003;
@@ -1302,7 +1306,10 @@ const CustomIcon = ({ name, size = 24, className = "" }) => {
             <Reveal delay={400}>
               <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
                 <button
-                 onClick={() => document.getElementById('objects').scrollIntoView({ behavior: 'smooth' })}
+                 onClick={() => {
+  shapeImpulse.y = -0.08;
+  document.getElementById('objects').scrollIntoView({ behavior: 'smooth' });
+}}
                   className="btn-primary px-12 py-5 rounded-2xl font-bold uppercase tracking-widest text-[10px] flex items-center justify-center transition-all duration-500 group relative overflow-hidden"
                 >
                   <span className="relative z-10 flex items-center gap-3">
@@ -1381,63 +1388,66 @@ const CustomIcon = ({ name, size = 24, className = "" }) => {
           <div id="product-container" className="grid grid-cols-1 md:grid-cols-2 gap-10 chroma-grid">
             {products.slice(0, limit || products.length).map((p, i) => (
               <Reveal key={p.id} delay={i * 100} className="h-full">
-                <div
-                  onClick={() => onSelectProduct({
-                    ...p,
-                    price: `INR ${parseFloat(p.price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
-                    desc: p.description,
-                    longDesc: p.description // Mapping until long_description exists
-                  })}
-                  className="glass-card group flex flex-col md:flex-row rounded-2xl p-5 gap-6 cursor-pointer md:h-52 w-full chroma-card"
-                >
-                  <div className="w-full md:w-40 aspect-square bg-[#1A1A1A] rounded-xl flex items-center justify-center relative overflow-hidden shrink-0">
-                    <div className="absolute inset-0 bg-brand-purple/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                    {p.image_url ? (
-                      <img
-                        src={p.image_url}
-                        alt={p.name}
-                        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
-                        onError={(e) => {
-                          e.target.src = "";
-                          e.target.className = "hidden";
-                        }}
-                      />
-                    ) : (
-                      <CustomIcon name="package" size={48} className="text-white/10 group-hover:scale-110 transition-transform duration-500" />
-                    )}
-                    <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                      <div className="px-4 py-2 bg-black/60 backdrop-blur-md rounded-full border border-white/10 text-[10px] uppercase tracking-widest font-bold">Examine Detail</div>
-                    </div>
-                  </div>
-                  <div className="flex flex-col justify-between py-1 flex-grow overflow-hidden">
-                    <div>
-                      <div className="flex justify-between items-start mb-2 gap-4">
-                        <h3 className="text-lg font-bold group-hover:text-brand-purple transition-colors uppercase tracking-tight line-clamp-1">{p.name}</h3>
-                        <div className="text-right">
-                          <span className="text-xs font-mono font-bold text-brand-purple whitespace-nowrap">
-                            ₹{parseFloat(p.price).toLocaleString('en-IN')}
-                          </span>
-                          {stockMap[p.name] === undefined && (
-                            <p className="text-gray-400 text-[10px]">Stock unavailable</p>
-                          )}
-                          {stockMap[p.name] > 5 && (
-                            <p className="text-green-600 text-[10px]">In Stock ({stockMap[p.name]})</p>
-                          )}
-                          {stockMap[p.name] > 0 && stockMap[p.name] <= 5 && (
-                            <p className="text-orange-500 text-[10px]">Only {stockMap[p.name]} left</p>
-                          )}
-                          {stockMap[p.name] === 0 && (
-                            <p className="text-red-500 text-[10px]">Out of Stock</p>
-                          )}
-                        </div>
-                      </div>
-                      <p className="text-brand-gray text-[11px] leading-relaxed mb-4 line-clamp-2">{p.description}</p>
-                    </div>
-                    <div className="text-[10px] font-bold uppercase tracking-widest text-white/50 group-hover:text-white transition-all flex items-center gap-2 mt-auto">
-                      View Details <CustomIcon name="arrow-up-right" size={12} className="group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
-                    </div>
-                  </div>
-                </div>
+                
+                
+<div
+  onClick={() => onSelectProduct({
+    ...p,
+    price: `INR ${parseFloat(p.price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
+    desc: p.description,
+    longDesc: p.description
+  })}
+  className="glass-card group flex flex-col md:flex-row rounded-2xl p-5 gap-6 cursor-pointer md:h-52 w-full chroma-card"
+>
+
+  <div className="w-full md:w-40 aspect-square bg-[#1A1A1A] rounded-xl flex items-center justify-center relative overflow-hidden shrink-0">
+    <div className="absolute inset-0 bg-brand-purple/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+    {p.image_url ? (
+      <img
+        src={p.image_url}
+        alt={p.name}
+        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+        onError={(e) => {
+          e.target.src = "";
+          e.target.className = "hidden";
+        }}
+      />
+    ) : (
+      <CustomIcon name="package" size={48} className="text-white/10 group-hover:scale-110 transition-transform duration-500" />
+    )}
+    <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+      <div className="px-4 py-2 bg-black/60 backdrop-blur-md rounded-full border border-white/10 text-[10px] uppercase tracking-widest font-bold">Examine Detail</div>
+    </div>
+  </div>
+  <div className="flex flex-col justify-between py-1 flex-grow overflow-hidden">
+    <div>
+      <div className="flex justify-between items-start mb-2 gap-4">
+        <h3 className="text-lg font-bold group-hover:text-brand-purple transition-colors uppercase tracking-tight line-clamp-1">{p.name}</h3>
+        <div className="text-right">
+          <span className="text-xs font-mono font-bold text-brand-purple whitespace-nowrap">
+            ₹{parseFloat(p.price).toLocaleString('en-IN')}
+          </span>
+          {stockMap[p.name] === undefined && (
+            <p className="text-gray-400 text-[10px]">Stock unavailable</p>
+          )}
+          {stockMap[p.name] > 5 && (
+            <p className="text-green-600 text-[10px]">In Stock ({stockMap[p.name]})</p>
+          )}
+          {stockMap[p.name] > 0 && stockMap[p.name] <= 5 && (
+            <p className="text-orange-500 text-[10px]">Only {stockMap[p.name]} left</p>
+          )}
+          {stockMap[p.name] === 0 && (
+            <p className="text-red-500 text-[10px]">Out of Stock</p>
+          )}
+        </div>
+      </div>
+      <p className="text-brand-gray text-[11px] leading-relaxed mb-4 line-clamp-2">{p.description}</p>
+    </div>
+    <div className="text-[10px] font-bold uppercase tracking-widest text-white/50 group-hover:text-white transition-all flex items-center gap-2 mt-auto">
+      View Details <CustomIcon name="arrow-up-right" size={12} className="group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
+    </div>
+  </div>
+</div>
               </Reveal>
             ))}
           </div>
@@ -2465,9 +2475,20 @@ const CustomIcon = ({ name, size = 24, className = "" }) => {
         fetchStock();
       }, []);
 
-      const handleSetView = (newView) => {
-        setView(newView);
-      };
+      const navOrder = ['home', 'prints', 'custom', 'about'];
+const handleSetView = (newView) => {
+  const currentIndex = navOrder.indexOf(view);
+  const newIndex = navOrder.indexOf(newView);
+  if (currentIndex !== -1 && newIndex !== -1) {
+    if (newIndex > currentIndex) {
+      shapeImpulse.x = 0.07; // moving right → shapes drift right
+    } else if (newIndex < currentIndex) {
+      shapeImpulse.x = -0.07; // moving left → shapes drift left
+    }
+  }
+  shapeImpulse.y = -0.04; // slight upward spin on any page change
+  setView(newView);
+};
 
       useEffect(() => {
         const handleEsc = (e) => {
@@ -2652,48 +2673,41 @@ const CustomIcon = ({ name, size = 24, className = "" }) => {
               opacity: 1
             });
           }
+const cards = document.querySelectorAll('.chroma-card');
+        cards.forEach(card => {
+          const rect = card.getBoundingClientRect();
+          const x = ((clientX - rect.left) / rect.width) * 100;
+          const y = ((clientY - rect.top) / rect.height) * 100;
+          card.style.setProperty('--mouse-x', `${x}%`);
+          card.style.setProperty('--mouse-y', `${y}%`);
 
-          // Process all cards tagged with chroma-card
-          const cards = document.querySelectorAll('.chroma-card');
-          cards.forEach(card => {
-            const rect = card.getBoundingClientRect();
+          const centerX = rect.left + rect.width / 2;
+          const centerY = rect.top + rect.height / 2;
+          const distance = Math.sqrt(Math.pow(clientX - centerX, 2) + Math.pow(clientY - centerY, 2));
 
-            // Local mouse position for the internal radiant highlight
-            const x = ((clientX - rect.left) / rect.width) * 100;
-            const y = ((clientY - rect.top) / rect.height) * 100;
-            card.style.setProperty('--mouse-x', `${x}%`);
-            card.style.setProperty('--mouse-y', `${y}%`);
-
-            // Proximity check for the "Reveal Color" spotlight effect
-            const centerX = rect.left + rect.width / 2;
-            const centerY = rect.top + rect.height / 2;
-            const distance = Math.sqrt(Math.pow(clientX - centerX, 2) + Math.pow(clientY - centerY, 2));
-
-            // If card is within the spotlight radius (500px), reveal its color
-            if (distance < 450) {
-              card.classList.add('in-spotlight');
-            } else {
-              card.classList.remove('in-spotlight');
-            }
-          });
-        });
-
-        // Fade out spotlight when mouse leaves the viewport
-        window.addEventListener('mouseleave', () => {
-          if (window.gsap) {
-            gsap.to(spotlight, { opacity: 0, duration: 1 });
+          if (distance < 450) {
+            card.classList.add('in-spotlight');
+          } else {
+            card.classList.remove('in-spotlight');
           }
-        });
-      };
 
-      // Wait for GSAP and DOM to be ready
-      const checkResources = setInterval(() => {
-        if (window.gsap && document.getElementById('studio-spotlight')) {
-          clearInterval(checkResources);
-          initSpotlight();
+        });
+      });
+
+      window.addEventListener('mouseleave', () => {
+        if (window.gsap) {
+          gsap.to(spotlight, { opacity: 0, duration: 1 });
         }
-      }, 100);
-    })();
+      });
+    };
+
+    const checkResources = setInterval(() => {
+      if (window.gsap && document.getElementById('studio-spotlight')) {
+        clearInterval(checkResources);
+        initSpotlight();
+      }
+    }, 100);
+  })();
   </script>
 </body>
 
