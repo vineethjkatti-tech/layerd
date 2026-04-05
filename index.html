@@ -15,16 +15,22 @@
   <meta property="og:description" content="Bespoke geometric collectibles and custom additive manufacturing.">
   <meta property="og:image" content="https://layerdprints.com/og-image.jpg">
 
+  <!-- Security Headers -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://unpkg.com https://cdn.jsdelivr.net https://checkout.razorpay.com https://cdn.razorpay.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://kdqhjcncsskyxtfhnkev.supabase.co https://*.supabase.co https://checkout.razorpay.com https://api.razorpay.com https://lumberjack.razorpay.com https://unpkg.com https://cdn.jsdelivr.net; frame-src https://checkout.razorpay.com https://api.razorpay.com;">
+  <meta http-equiv="X-Content-Type-Options" content="nosniff">
+  <!-- X-Frame-Options cannot be set via meta tag, must be set by server HTTP header -->
+  <meta http-equiv="X-XSS-Protection" content="1; mode=block">
+  <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
+
   <!-- Typography & Assets -->
-  <link rel="icon" href="/favicon.png?v=7" type="image/png" />
-  <link rel="shortcut icon" href="/favicon.png?v=7" type="image/png" />
-  <link rel="apple-touch-icon" href="/favicon.png?v=7" />
+  <link rel="icon" href="layerd-website/favicon.png" type="image/png" />
+  <link rel="shortcut icon" href="layerd-website/favicon.png" type="image/png" />
+  <link rel="apple-touch-icon" href="layerd-website/favicon.png" />
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
     rel="stylesheet">
-  <script src="https://unpkg.com/lucide@latest"></script>
   <script>
     tailwind.config = {
       theme: {
@@ -375,11 +381,66 @@
     const shapeAnimation = { phase: 'idle', fallProgress: 0 };
     const shapeImpulse = { x: 0, y: 0 };
     const Motion = window.Motion || {};
-    const { motion, AnimatePresence } = Motion;
+    const motion = Motion.motion || {
+      div: 'div',
+      span: 'span',
+      button: 'button',
+      main: 'main',
+      header: 'header',
+      section: 'section',
+      footer: 'footer',
+      nav: 'nav',
+      form: 'form',
+      a: 'a',
+      h1: 'h1',
+      h2: 'h2',
+      h3: 'h3',
+      p: 'p'
+    };
+    const AnimatePresence = Motion.AnimatePresence || function({ children }) { return children; };
 
     const supabaseUrl = window.SUPABASE_URL || "https://kdqhjcncsskyxtfhnkev.supabase.co";
     const supabaseKey = window.SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtkcWhqY25jc3NreXh0Zmhua2V2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIyOTA1MTgsImV4cCI6MjA4Nzg2NjUxOH0.gy8KX-gAvIWXt0I-LQsU27J1dKycH_NKQrj_LHjdS18";
-    const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
+
+    const _mockQuery = {
+      _order: null,
+      _eqFilters: [],
+      _eq(key, value) { this._eqFilters.push({ key, value }); return this; },
+      order(key, opts) { this._order = { key, ascending: opts?.ascending ?? true }; return this; },
+      select() { return Promise.resolve({ data: [], error: null }); },
+      insert() { return Promise.resolve({ data: null, error: new Error('Supabase not configured') }); }
+    };
+
+    const _mockFrom = (table) => ({
+      select(columns) {
+        const q = Object.create(_mockQuery);
+        return q;
+      },
+      insert(items) {
+        return Promise.resolve({ data: null, error: new Error('Supabase not configured') }); }
+    });
+
+    const _mockAuth = {
+      getSession() { return Promise.resolve({ data: { session: null }, error: null }); },
+      onAuthStateChange() { return { unsubscribe() {} }; }
+    };
+
+    const _mockStorage = {
+      from(bucket) {
+        return {
+          upload(path, file) { return Promise.resolve({ data: null, error: new Error('Supabase not configured') }); },
+          getPublicUrl(path) { return { data: { publicUrl: '' } }; }
+        };
+      }
+    };
+
+    const supabase = supabaseUrl && supabaseKey
+      ? window.supabase.createClient(supabaseUrl, supabaseKey)
+      : {
+          from: _mockFrom,
+          auth: _mockAuth,
+          storage: _mockStorage
+        };
 
     // =============================================================================
     // SECURITY: Input Sanitization Functions
@@ -404,37 +465,129 @@
     }
 
     // =============================================================================
-    // SECURITY: Rate Limiting Helper
+    // TOAST NOTIFICATION SYSTEM
     // =============================================================================
-    const rateLimitCache = new Map();
-    const RATE_LIMIT_MAX = 10;
-    const RATE_LIMIT_WINDOW = 60000;
+    const ToastContext = React.createContext(null);
 
-    async function checkRateLimit(endpoint) {
-      const now = Date.now();
-      const key = endpoint;
-      const record = rateLimitCache.get(key);
-      
-      if (!record || now - record.resetAt > RATE_LIMIT_WINDOW) {
-        rateLimitCache.set(key, { count: 1, resetAt: now });
-        return true;
+    const ToastProvider = ({ children }) => {
+      const [toasts, setToasts] = useState([]);
+
+      const addToast = (message, type = 'info', duration = 4000) => {
+        const id = Date.now();
+        setToasts(prev => [...prev, { id, message, type }]);
+        setTimeout(() => {
+          setToasts(prev => prev.filter(t => t.id !== id));
+        }, duration);
+      };
+
+      const removeToast = (id) => {
+        setToasts(prev => prev.filter(t => t.id !== id));
+      };
+
+      const toast = {
+        success: (message) => addToast(message, 'success'),
+        error: (message) => addToast(message, 'error'),
+        info: (message) => addToast(message, 'info'),
+        warning: (message) => addToast(message, 'warning')
+      };
+
+      return (
+        <ToastContext.Provider value={toast}>
+          {children}
+          <div className="fixed top-6 right-6 z-[200] flex flex-col gap-3 pointer-events-none">
+            <AnimatePresence>
+              {toasts.map(toast => (
+                <motion.div
+                  key={toast.id}
+                  initial={{ opacity: 0, x: 100, scale: 0.9 }}
+                  animate={{ opacity: 1, x: 0, scale: 1 }}
+                  exit={{ opacity: 0, x: 100, scale: 0.9 }}
+                  transition={{ duration: 0.3 }}
+                  className={`
+                    pointer-events-auto min-w-[300px] max-w-md p-4 rounded-xl border backdrop-blur-xl shadow-2xl
+                    flex items-center gap-3
+                    ${toast.type === 'success' ? 'bg-green-500/10 border-green-500/30 text-green-400' : ''}
+                    ${toast.type === 'error' ? 'bg-red-500/10 border-red-500/30 text-red-400' : ''}
+                    ${toast.type === 'info' ? 'bg-brand-purple/10 border-brand-purple/30 text-brand-purple' : ''}
+                    ${toast.type === 'warning' ? 'bg-orange-500/10 border-orange-500/30 text-orange-400' : ''}
+                  `}
+                >
+                  <CustomIcon
+                    name={toast.type === 'success' ? 'check' : toast.type === 'error' ? 'alert-circle' : toast.type === 'warning' ? 'alert-triangle' : 'info'}
+                    size={18}
+                  />
+                  <span className="text-xs font-bold uppercase tracking-wider flex-1">{toast.message}</span>
+                  <button
+                    onClick={() => removeToast(toast.id)}
+                    className="p-1 hover:bg-white/10 rounded transition-colors"
+                  >
+                    <CustomIcon name="x" size={14} />
+                  </button>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </div>
+        </ToastContext.Provider>
+      );
+    };
+
+    const useToast = () => {
+      const context = React.useContext(ToastContext);
+      if (!context) {
+        throw new Error('useToast must be used within ToastProvider');
       }
-      
-      if (record.count >= RATE_LIMIT_MAX) {
-        return false;
+      return context;
+    };
+
+    // =============================================================================
+    // ERROR BOUNDARY COMPONENT
+    // =============================================================================
+    class ErrorBoundary extends React.Component {
+      constructor(props) {
+        super(props);
+        this.state = { hasError: false, error: null };
       }
-      
-      record.count++;
-      return true;
+
+      static getDerivedStateFromError(error) {
+        return { hasError: true, error };
+      }
+
+      componentDidCatch(error, errorInfo) {
+        console.error('ErrorBoundary caught:', error, errorInfo);
+      }
+
+      render() {
+        if (this.state.hasError) {
+          return (
+            <div className="min-h-screen flex items-center justify-center bg-[#0A0A0A] text-white p-6">
+              <div className="max-w-md text-center space-y-6">
+                <div className="w-20 h-20 mx-auto rounded-full bg-red-500/10 border border-red-500/30 flex items-center justify-center">
+                  <CustomIcon name="alert-triangle" size={40} className="text-red-400" />
+                </div>
+                <h1 className="text-2xl font-bold uppercase tracking-widest">Something Went Wrong</h1>
+                <p className="text-brand-gray text-sm">The interface encountered an unexpected error. Please refresh the page.</p>
+                <button
+                  onClick={() => window.location.reload()}
+                  className="btn-primary px-8 py-3 rounded-xl font-bold uppercase tracking-widest text-xs"
+                >
+                  Refresh Page
+                </button>
+              </div>
+            </div>
+          );
+        }
+        return this.props.children;
+      }
     }
 
     // =============================================================================
     // SECURITY: Edge Function Configuration
+    // NOTE: Rate limiting is enforced server-side via Edge Functions only.
+    // Client-side rate limiting is ineffective and has been removed.
     // =============================================================================
     const EDGE_FUNCTIONS = {
       verifyPayment: `${supabaseUrl}/functions/v1/verify-payment`,
       validateFile: `${supabaseUrl}/functions/v1/validate-file`,
-      rateLimit: `${supabaseUrl}/functions/v1/rate-limit`,
       submitCustomRequest: `${supabaseUrl}/functions/v1/submit-custom-request`
     };
 
@@ -490,6 +643,7 @@
     }
 
     const CheckoutModal = ({ isOpen, onClose, cart, total, onSuccess }) => {
+      const toast = useToast();
       const [loading, setLoading] = useState(false);
       const [formData, setFormData] = useState({ name: "", email: "" });
       const [isSuccess, setIsSuccess] = useState(false);
@@ -503,10 +657,20 @@
 
       const loadRazorpay = () => {
         return new Promise((resolve) => {
+          if (window.Razorpay) {
+            resolve(true);
+            return;
+          }
           const script = document.createElement("script");
           script.src = "https://checkout.razorpay.com/v1/checkout.js";
-          script.onload = () => resolve(true);
-          script.onerror = () => resolve(false);
+          script.onload = () => {
+            document.body.removeChild(script);
+            resolve(true);
+          };
+          script.onerror = () => {
+            document.body.removeChild(script);
+            resolve(false);
+          };
           document.body.appendChild(script);
         });
       };
@@ -523,8 +687,15 @@
           // True multi-item cart requires backend order generation for Razorpay.
           const orderProductName = cart.map(item => item.name).join(", ");
 
+          // SECURITY: Razorpay key should be fetched from backend to avoid exposure
+          // For now, using window.RAZORPAY_KEY which should be set server-side
+          const razorpayKey = window.RAZORPAY_KEY || "";
+          if (!razorpayKey) {
+            throw new Error("Razorpay key not configured. Set window.RAZORPAY_KEY via secure configuration.");
+          }
+
           const options = {
-            key: "rzp_live_SNyZN2rAyLfuf4",
+            key: razorpayKey,
             amount: total * 100, // Razorpay works in smallest currency unit (paise)
             currency: "INR",
             name: "Layered",
@@ -536,20 +707,14 @@
             },
             handler: async function (response) {
               try {
-                // SECURITY: Rate limit check
-                const allowed = await checkRateLimit('checkout');
-                if (!allowed) {
-                  alert("Too many requests. Please try again in a minute.");
-                  return;
-                }
-
                 // Post-payment success: Verify with server-side Edge Function
+                // Note: Rate limiting is enforced server-side by the Edge Function
                 console.log("Payment successful:", response.razorpay_payment_id);
 
                 // Sanitize inputs before sending
                 const sanitizedItems = cart.map(item => ({
                   name: sanitizeText(item.name, 255),
-                  price: parseFloat(item.price.replace(/[^\d.]/g, '')),
+                  price: typeof item.price === 'string' ? parseFloat(item.price.replace(/[^\d.]/g, '')) : parseFloat(item.price) || 0,
                   qty: Math.max(1, parseInt(item.qty) || 1)
                 }));
 
@@ -573,7 +738,7 @@
                 
                 if (!verifyResponse.ok || verifyResult.error) {
                   console.error("Payment verification failed:", verifyResult.error);
-                  alert("Payment verification failed. Please contact support with payment ID: " + response.razorpay_payment_id);
+                  toast.error("Payment verification failed. Contact support with payment ID: " + response.razorpay_payment_id);
                   return;
                 }
 
@@ -583,7 +748,7 @@
                 setTimeout(() => { onClose(); }, 5000);
               } catch (dbErr) {
                 console.error("Failed to save order:", dbErr);
-                alert("Payment captured, but order saving failed. Please contact support.");
+                toast.error("Payment captured but order saving failed. Contact support.");
               }
             },
           };
@@ -591,13 +756,13 @@
           const paymentObject = new window.Razorpay(options);
 
           paymentObject.on('payment.failed', function (response) {
-            alert("Payment Failed: " + response.error.description);
+            toast.error("Payment Failed: " + response.error.description);
           });
 
           paymentObject.open();
 
         } catch (err) {
-          alert("Error initializing payment: " + err.message);
+          toast.error("Error initializing payment: " + err.message);
         } finally {
           setLoading(false);
         }
@@ -909,7 +1074,15 @@
     scene.add(particles);
 
     let t = 0, animId;
+    let isVisible = document.visibilityState === 'visible';
+
+    const handleVisibility = () => {
+      isVisible = document.visibilityState === 'visible';
+      if (isVisible) animate();
+    };
+
     const animate = () => {
+      if (!isVisible) return;
       animId = requestAnimationFrame(animate);
       t += 0.01;
 
@@ -920,7 +1093,7 @@
       camera.position.y = -mouse.y * 5;
       camera.lookAt(0, 0, 0);
 
-      
+
 if (shapeAnimation.phase === 'falling') {
   shapeAnimation.fallProgress = Math.min(shapeAnimation.fallProgress + 0.018, 1);
 }
@@ -968,11 +1141,40 @@ shapes.forEach(({ mesh, wf, sx, sy }, i) => {
       renderer.setSize(window.innerWidth, window.innerHeight);
     };
     window.addEventListener('resize', onResize);
+    document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
       cancelAnimationFrame(animId);
+      document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('resize', onResize);
+
+      // Dispose all shapes (geometries and materials)
+      shapes.forEach(({ mesh, wf }) => {
+        mesh.geometry.dispose();
+        mesh.material.dispose();
+        wf.geometry.dispose();
+        wf.material.dispose();
+        scene.remove(mesh);
+        scene.remove(wf);
+      });
+
+      // Dispose hero icosahedron
+      hero.geometry.dispose();
+      hero.material.dispose();
+      heroWF.geometry.dispose();
+      heroWF.material.dispose();
+      scene.remove(hero);
+      scene.remove(heroWF);
+
+      // Dispose particles
+      particles.geometry.dispose();
+      particles.material.dispose();
+      scene.remove(particles);
+
+      // Dispose lights
+      scene.clear();
+
       renderer.dispose();
       if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
     };
@@ -996,16 +1198,20 @@ const Reveal = ({ children, className = "", delay = 0 }) => {
   const domRef = useRef();
   const [isVisible, setVisible] = useState(false);
   useEffect(() => {
+    let timeoutId = null;
     const observer = new IntersectionObserver(entries => {
       entries.forEach(entry => {
         if (entry.isIntersecting) {
-          setTimeout(() => setVisible(true), delay);
+          timeoutId = setTimeout(() => setVisible(true), delay);
         }
       });
     });
     const el = domRef.current;
     if (el) observer.observe(el);
-    return () => { if (el) observer.unobserve(el); };
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      if (el) observer.unobserve(el);
+    };
   }, [delay]);
   return (
     <div ref={domRef} className={`reveal ${isVisible ? 'is-visible' : ''} ${className}`}>
@@ -1019,6 +1225,7 @@ const CustomIcon = ({ name, size = 24, className = "" }) => {
     "shopping-cart": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>`,
     "x": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`,
     "check": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 11 4 16"/></svg>`,
+    "clock": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
     "plus": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
     "minus": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
     "trash": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>`,
@@ -1043,9 +1250,23 @@ const CustomIcon = ({ name, size = 24, className = "" }) => {
     "upload": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>`,
     "message-circle": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
     "file-text": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`,
-    "home": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`,
-    "wand": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4V2"/><path d="M15 16v-2"/><path d="M8 9h2"/><path d="M20 9h2"/><path d="M17.8 11.8 19 13"/><path d="M15 9h.01"/><path d="M17.8 6.2 19 5"/><path d="m3 21 9-9"/><path d="M12.2 6.2 11 5"/></svg>`,
+    // Missing icons added for complete coverage
+    "shopping-bag": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>`,
+    "trash-2": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`,
+    "package": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>`,
+    "alert-circle": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`,
+    "alert-triangle": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
     "info": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`,
+    "edit-3": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>`,
+    "home": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`,
+    "user": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,
+    "lock": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`,
+    "arrow-up-right": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>`,
+    "database": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>`,
+    "sparkles": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.912 5.813a2 2 0 0 0 1.272 1.272L21 12l-5.813 1.912a2 2 0 0 0-1.272 1.272L12 21l-1.912-5.813a2 2 0 0 0-1.272-1.272L3 12l5.813-1.912a2 2 0 0 0 1.272-1.272L12 3z"/><path d="M5 3v4"/><path d="M9 5H1"/><path d="M19 17v4"/><path d="M17 19h4"/></svg>`,
+    "shield-check": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>`,
+    "upload-cloud": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>`,
+    "chevron-right": `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`,
   };
 
   return (
@@ -1060,6 +1281,7 @@ const CustomIcon = ({ name, size = 24, className = "" }) => {
     // Navbar component moved to end of file with updated routes
 
     const CartSidebar = ({ items, isOpen, onClose, onUpdateQty, onRemove, onCheckout, total, stockMap = {} }) => {
+      const toast = useToast();
       return (
         <AnimatePresence>
           {isOpen && (
@@ -1137,7 +1359,7 @@ const CustomIcon = ({ name, size = 24, className = "" }) => {
                                 onClick={() => {
                                   const availableStock = stockMap[item.name];
                                   if (availableStock !== undefined && item.qty >= availableStock) {
-                                    alert("Maximum available stock reached");
+                                    toast.warning("Maximum available stock reached");
                                     return;
                                   }
                                   onUpdateQty(item.id, item.qty + 1);
@@ -1185,10 +1407,12 @@ const CustomIcon = ({ name, size = 24, className = "" }) => {
       );
     };
 
-    const ProductModal = ({ product, onClose, onAddToCart }) => {
+    const ProductModal = ({ product, onClose, onAddToCart, stockMap = {}, onPreorder }) => {
       const [added, setAdded] = useState(false);
       const [currentImage, setCurrentImage] = useState(0);
       if (!product) return null;
+
+      const isOutOfStock = stockMap[product.name] === 0;
 
       const images = [product.image_url, product.image2_url].filter(Boolean);
 
@@ -1289,29 +1513,256 @@ const CustomIcon = ({ name, size = 24, className = "" }) => {
                   </div>
                 </div>
 
-                <button
-                  onClick={handleAdd}
-                  disabled={added}
-                  className={`${added ? 'bg-white text-black scale-[0.98]' : 'btn-primary'} w-full py-4 rounded-xl font-bold text-sm flex items-center justify-center gap-3 group border border-transparent transition-all duration-300 transform active:scale-95 shadow-lg`}
-                >
-                  {added ? (
-                    <>
-                      <CustomIcon name="check" size={18} className="animate-in zoom-in duration-300" />
-                      Added to Collection
-                    </>
-                  ) : (
-                    <>
-                      Add to Cart
-                      <CustomIcon name="chevron-right" size={18} className="group-hover:translate-x-1 transition-transform" />
-                    </>
-                  )}
-                </button>
+                {isOutOfStock ? (
+                  <button
+                    onClick={() => onPreorder && onPreorder(product)}
+                    className="w-full py-4 rounded-xl font-bold text-sm flex items-center justify-center gap-3 group border border-brand-purple/40 bg-brand-purple/10 text-brand-purple hover:bg-brand-purple hover:text-black transition-all duration-300 transform active:scale-95 shadow-lg"
+                  >
+                    <CustomIcon name="clock" size={18} className="group-hover:translate-x-1 transition-transform" />
+                    Pre-Order
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleAdd}
+                    disabled={added}
+                    className={`${added ? 'bg-white text-black scale-[0.98]' : 'btn-primary'} w-full py-4 rounded-xl font-bold text-sm flex items-center justify-center gap-3 group border border-transparent transition-all duration-300 transform active:scale-95 shadow-lg`}
+                  >
+                    {added ? (
+                      <>
+                        <CustomIcon name="check" size={18} className="animate-in zoom-in duration-300" />
+                        Added to Collection
+                      </>
+                    ) : (
+                      <>
+                        Add to Cart
+                        <CustomIcon name="chevron-right" size={18} className="group-hover:translate-x-1 transition-transform" />
+                      </>
+                    )}
+                  </button>
+                )}
 
                 <p className="text-[9px] uppercase tracking-[0.2em] text-brand-gray/30 text-center mt-5">
                   Limited Studio Run • Serialized
                 </p>
               </div>
             </div>
+          </div>
+        </div>
+      );
+    };
+
+    // =============================================================================
+    // PRE-ORDER MODAL COMPONENT
+    // =============================================================================
+    const PreorderModal = ({ product, isOpen, onClose, toast }) => {
+      const [formData, setFormData] = useState({ name: '', email: '' });
+      const [errors, setErrors] = useState({ name: '', email: '' });
+      const [loading, setLoading] = useState(false);
+      const [isSuccess, setIsSuccess] = useState(false);
+
+      useEffect(() => {
+        if (!isOpen) {
+          setFormData({ name: '', email: '' });
+          setErrors({ name: '', email: '' });
+          setIsSuccess(false);
+        }
+      }, [isOpen]);
+
+      useEffect(() => {
+        if (isOpen) {
+          document.body.style.overflow = 'hidden';
+        } else {
+          document.body.style.overflow = '';
+        }
+        return () => { document.body.style.overflow = ''; };
+      }, [isOpen]);
+
+      const validateForm = () => {
+        const newErrors = { name: '', email: '' };
+        let isValid = true;
+
+        if (!formData.name.trim()) {
+          newErrors.name = 'Name is required';
+          isValid = false;
+        }
+
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!formData.email.trim()) {
+          newErrors.email = 'Email is required';
+          isValid = false;
+        } else if (!emailRegex.test(formData.email)) {
+          newErrors.email = 'Please enter a valid email';
+          isValid = false;
+        }
+
+        setErrors(newErrors);
+        return isValid;
+      };
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!validateForm() || !product) return;
+
+        setLoading(true);
+
+        try {
+          const productId = typeof product.id === 'number' ? product.id : parseInt(product.id, 10);
+          
+          console.log('Product data:', product);
+          console.log('Product ID being sent:', productId);
+          
+          const insertData = [{
+            product_id: productId,
+            product_name: product.name,
+            user_name: sanitizeText(formData.name, 255),
+            email: sanitizeEmail(formData.email)
+          }];
+
+          console.log('Insert payload:', JSON.stringify(insertData));
+
+          // Use Supabase Edge Function for preorders (bypasses RLS)
+          const response = await fetch(`${supabaseUrl}/functions/v1/submit-preorder`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'apikey': supabaseKey,
+              'Authorization': `Bearer ${supabaseKey}`
+            },
+            body: JSON.stringify({
+              product_id: productId,
+              product_name: product.name,
+              user_name: sanitizeText(formData.name, 255),
+              email: sanitizeEmail(formData.email)
+            })
+          });
+
+          const responseData = await response.json();
+          
+          if (!response.ok) {
+            console.error('Preorder error:', response.status, responseData);
+            throw new Error(responseData.error || responseData.message || `Server error: ${response.status}`);
+          }
+
+          console.log('Preorder submitted:', responseData);
+          setIsSuccess(true);
+          setTimeout(() => { onClose(); }, 2500);
+
+        } catch (err) {
+          console.error('Preorder submission error:', err);
+          toast.error(err.message || 'Failed to submit pre-order. Please try again.');
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      if (!isOpen || !product) return null;
+
+      return (
+        <div
+          className="fixed inset-0 z-[150] flex items-center justify-center p-6"
+          onClick={onClose}
+        >
+          <div 
+            className="absolute inset-0 bg-black/80 backdrop-blur-md"
+            style={{ animation: 'fadeIn 0.3s ease-out' }}
+          />
+          
+          <div
+            className="relative max-w-md w-full bg-[#0A0A0A]/90 border border-white/20 rounded-3xl p-8 shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+            style={{ 
+              animation: 'slideScale 0.4s cubic-bezier(0.2, 0.8, 0.2, 1)',
+              backdropFilter: 'blur(20px)',
+              WebkitBackdropFilter: 'blur(20px)'
+            }}
+          >
+            <button
+              onClick={onClose}
+              className="absolute top-6 right-6 w-10 h-10 flex items-center justify-center rounded-full bg-white/5 hover:bg-white/10 transition-all duration-300 border border-white/20 text-white"
+            >
+              <CustomIcon name="x" size={20} />
+            </button>
+
+            {isSuccess ? (
+              <div className="py-8 flex flex-col items-center text-center space-y-6">
+                <div className="w-20 h-20 rounded-full bg-brand-purple/20 flex items-center justify-center border border-brand-purple/30 shadow-[0_0_40px_rgba(155,135,245,0.3)]">
+                  <CustomIcon name="check" size={40} className="text-brand-purple" />
+                </div>
+                <div className="space-y-2">
+                  <h2 className="text-2xl font-bold text-white">Pre-Order Submitted!</h2>
+                  <p className="text-brand-gray text-sm">
+                    We'll notify you when {product.name} is back in stock.
+                  </p>
+                </div>
+                <p className="text-[10px] uppercase tracking-widest text-brand-purple/60">
+                  Redirecting...
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="mb-6">
+                  <span className="text-brand-purple text-[10px] font-bold uppercase tracking-[0.3em]">
+                    Pre-Order
+                  </span>
+                  <h2 className="text-2xl font-bold text-white mt-1">{product.name}</h2>
+                  <p className="text-brand-gray text-sm mt-2">
+                    This item is currently out of stock. Submit your details to be notified when available.
+                  </p>
+                </div>
+
+                <form onSubmit={handleSubmit} className="space-y-5">
+                  <div>
+                    <label className="block text-[10px] uppercase tracking-widest text-brand-gray font-bold mb-2">
+                      Your Name
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.name}
+                      onChange={(e) => {
+                        setFormData({ ...formData, name: e.target.value });
+                        if (errors.name) setErrors({ ...errors, name: '' });
+                      }}
+                      className={`w-full bg-white/[0.03] border rounded-xl px-4 py-4 text-white placeholder:text-white/20 focus:outline-none transition-colors ${
+                        errors.name ? 'border-red-500' : 'border-white/10 focus:border-brand-purple/40'
+                      }`}
+                      placeholder="Enter your name"
+                    />
+                    {errors.name && (
+                      <p className="text-red-400 text-[10px] mt-1">{errors.name}</p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] uppercase tracking-widest text-brand-gray font-bold mb-2">
+                      Email Address
+                    </label>
+                    <input
+                      type="email"
+                      value={formData.email}
+                      onChange={(e) => {
+                        setFormData({ ...formData, email: e.target.value });
+                        if (errors.email) setErrors({ ...errors, email: '' });
+                      }}
+                      className={`w-full bg-white/[0.03] border rounded-xl px-4 py-4 text-white placeholder:text-white/20 focus:outline-none transition-colors ${
+                        errors.email ? 'border-red-500' : 'border-white/10 focus:border-brand-purple/40'
+                      }`}
+                      placeholder="your@email.com"
+                    />
+                    {errors.email && (
+                      <p className="text-red-400 text-[10px] mt-1">{errors.email}</p>
+                    )}
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="w-full py-4 rounded-xl font-bold text-sm uppercase tracking-widest bg-brand-purple text-black hover:bg-white transition-all duration-300 shadow-[0_0_30px_rgba(155,135,245,0.3)] disabled:opacity-50 disabled:cursor-not-allowed mt-2"
+                  >
+                    {loading ? 'Submitting...' : 'Submit Pre-Order'}
+                  </button>
+                </form>
+              </>
+            )}
           </div>
         </div>
       );
@@ -1393,7 +1844,7 @@ const CustomIcon = ({ name, size = 24, className = "" }) => {
       );
     };
 
-    const ProductSection = ({ onSelectProduct, limit = null, title = "Featured", stockMap = {} }) => {
+    const ProductSection = ({ onSelectProduct, onPreorder, limit = null, title = "Featured", stockMap = {} }) => {
       const [products, setProducts] = useState([]);
       const [loading, setLoading] = useState(true);
       const [error, setError] = useState(null);
@@ -1410,7 +1861,7 @@ const CustomIcon = ({ name, size = 24, className = "" }) => {
             setProducts(data || []);
           } catch (err) {
             console.error('Studio Sync Error:', err);
-            setError(err.message);
+            setError(err.message || String(err));
           } finally {
             setLoading(false);
           }
@@ -1462,7 +1913,7 @@ const CustomIcon = ({ name, size = 24, className = "" }) => {
 <div
   onClick={() => onSelectProduct({
     ...p,
-    price: `INR ${parseFloat(p.price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
+    price: `INR ${(isNaN(parseFloat(p.price)) ? 0 : parseFloat(p.price)).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
     desc: p.description,
     longDesc: p.description
   })}
@@ -1477,8 +1928,10 @@ const CustomIcon = ({ name, size = 24, className = "" }) => {
         alt={p.name}
         className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
         onError={(e) => {
-          e.target.src = "";
-          e.target.className = "hidden";
+          if (e.target.src) {
+            e.target.src = "";
+            e.target.className = "hidden";
+          }
         }}
       />
     ) : (
@@ -1494,7 +1947,7 @@ const CustomIcon = ({ name, size = 24, className = "" }) => {
         <h3 className="text-lg font-bold group-hover:text-brand-purple transition-colors uppercase tracking-tight line-clamp-1">{p.name}</h3>
         <div className="text-right">
           <span className="text-xs font-mono font-bold text-brand-purple whitespace-nowrap">
-            ₹{parseFloat(p.price).toLocaleString('en-IN')}
+            ₹{(isNaN(parseFloat(p.price)) ? 0 : parseFloat(p.price)).toLocaleString('en-IN')}
           </span>
           {stockMap[p.name] === undefined && (
             <p className="text-gray-400 text-[10px]">Stock unavailable</p>
@@ -1512,9 +1965,26 @@ const CustomIcon = ({ name, size = 24, className = "" }) => {
       </div>
       <p className="text-brand-gray text-[11px] leading-relaxed mb-4 line-clamp-2">{p.description}</p>
     </div>
-    <div className="text-[10px] font-bold uppercase tracking-widest text-white/50 group-hover:text-white transition-all flex items-center gap-2 mt-auto">
-      View Details <CustomIcon name="arrow-up-right" size={12} className="group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
-    </div>
+    {stockMap[p.name] === 0 ? (
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onPreorder && onPreorder({
+            ...p,
+            price: `INR ${(isNaN(parseFloat(p.price)) ? 0 : parseFloat(p.price)).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
+            desc: p.description,
+            longDesc: p.description
+          });
+        }}
+        className="mt-auto text-[10px] font-bold uppercase tracking-widest text-brand-purple hover:text-white transition-all flex items-center gap-2"
+      >
+        Pre-Order <CustomIcon name="clock" size={12} className="group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
+      </button>
+    ) : (
+      <div className="text-[10px] font-bold uppercase tracking-widest text-white/50 group-hover:text-white transition-all flex items-center gap-2 mt-auto">
+        View Details <CustomIcon name="arrow-up-right" size={12} className="group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
+      </div>
+    )}
   </div>
 </div>
               </Reveal>
@@ -1942,8 +2412,11 @@ const CustomIcon = ({ name, size = 24, className = "" }) => {
         fetchMaterials();
       }, []);
 
-      // Fetch colors based on material
+      // Fetch colors based on material with race condition prevention
       useEffect(() => {
+        let isStale = false;
+        let abortController = null;
+
         const fetchColors = async () => {
           // Immediately clear existing palette and selection to prevent stale data
           setColors([]);
@@ -1952,6 +2425,10 @@ const CustomIcon = ({ name, size = 24, className = "" }) => {
           if (!selectedMaterial) return;
 
           setFetchingColors(true);
+
+          // Use AbortController for Supabase query cancellation simulation
+          abortController = new AbortController();
+
           try {
             const { data, error } = await supabase
               .from('colors')
@@ -1960,16 +2437,31 @@ const CustomIcon = ({ name, size = 24, className = "" }) => {
               .eq('is_available', true)
               .order('name');
 
+            // Ignore results if this effect has been superseded
+            if (isStale) return;
+
             if (error) throw error;
             setColors(data || []);
           } catch (err) {
-            console.error('Color sync failure:', err);
+            if (!isStale) {
+              console.error('Color sync failure:', err);
+            }
           } finally {
-            setFetchingColors(false);
+            if (!isStale) {
+              setFetchingColors(false);
+            }
           }
         };
 
         fetchColors();
+
+        // Cleanup: mark as stale and abort any pending operations
+        return () => {
+          isStale = true;
+          if (abortController) {
+            abortController.abort();
+          }
+        };
       }, [selectedMaterial]);
 
       const validateEmail = (email) => {
@@ -2020,13 +2512,7 @@ const CustomIcon = ({ name, size = 24, className = "" }) => {
           return;
         }
 
-        // SECURITY: Rate limit check
-        const allowed = await checkRateLimit('custom-request');
-        if (!allowed) {
-          setError("Too many requests. Please try again in a minute.");
-          return;
-        }
-
+        // Note: Rate limiting is enforced server-side by the Edge Function
         setLoading(true);
 
         try {
@@ -2217,7 +2703,7 @@ const CustomIcon = ({ name, size = 24, className = "" }) => {
                   <label className="block text-[10px] uppercase tracking-widest text-brand-gray font-bold mb-3">Project Constraints & Description</label>
                   <textarea
                     required
-                    rows="4"
+                    rows={4}
                     value={formData.description}
                     onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                     placeholder="Briefly describe the intent of this object..."
@@ -2404,8 +2890,8 @@ const CustomIcon = ({ name, size = 24, className = "" }) => {
       const navItems = [
         { name: 'Home', id: 'home', icon: 'home' },
         { name: 'Prints', id: 'prints', icon: 'package' },
-        { name: 'Custom', id: 'custom', icon: 'wand' },
-        { name: 'About', id: 'about', icon: 'info' }
+        { name: 'Custom', id: 'custom', icon: 'edit-3' },
+        { name: 'About', id: 'about', icon: 'user' }
       ];
 
       const handleNavClick = (id) => {
@@ -2539,24 +3025,59 @@ const CustomIcon = ({ name, size = 24, className = "" }) => {
     };
 
     const App = () => {
+      const toast = useToast();
       const [view, setView] = useState('home');
       const [user, setUser] = useState(null);
       const [selectedProduct, setSelectedProduct] = useState(null);
-      const [cart, setCart] = useState([]);
-      const [isCartOpen, setIsCartOpen] = useState(false);
-      const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
       const [stockMap, setStockMap] = useState({});
 
+      // CART PERSISTENCE: Load cart from localStorage on mount
+      const [cart, setCart] = useState(() => {
+        try {
+          const savedCart = localStorage.getItem('layerd_cart');
+          if (!savedCart) return [];
+          const parsed = JSON.parse(savedCart);
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      });
+      const [isCartOpen, setIsCartOpen] = useState(false);
+      const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+      const [preorderProduct, setPreorderProduct] = useState(null);
+      const [isPreorderOpen, setIsPreorderOpen] = useState(false);
+
+      // Open preorder modal with product
+      const handlePreorder = (product) => {
+        setPreorderProduct(product);
+        setIsPreorderOpen(true);
+      };
+
+      // CART PERSISTENCE: Save cart to localStorage whenever it changes
       useEffect(() => {
-        supabase.auth.getSession().then(({ data: { session } }) => {
+        try {
+          localStorage.setItem('layerd_cart', JSON.stringify(cart));
+        } catch (e) {
+          console.warn('Failed to persist cart:', e);
+        }
+      }, [cart]);
+
+      useEffect(() => {
+        if (!supabase.auth) return;
+
+        supabase.auth.getSession().then((result) => {
+          const session = result?.data?.session ?? null;
           setUser(session?.user ?? null);
+        }).catch((err) => {
+          console.warn('Failed to get session:', err);
         });
 
-        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+        const authResult = supabase.auth.onAuthStateChange((_event, session) => {
           setUser(session?.user ?? null);
         });
+        const subscription = authResult?.data?.subscription;
 
-        return () => subscription.unsubscribe();
+        return () => { if (subscription) subscription.unsubscribe(); };
       }, []);
 
       // Fetch stock data on mount
@@ -2565,7 +3086,7 @@ const CustomIcon = ({ name, size = 24, className = "" }) => {
           const { data } = await supabase
             .from("product_stock")
             .select("product_name, stock");
-          
+
           if (data) {
             const map = {};
             data.forEach((item) => {
@@ -2597,6 +3118,7 @@ const handleSetView = (newView) => {
           if (e.key === 'Escape') {
             setSelectedProduct(null);
             setIsCartOpen(false);
+            setIsPreorderOpen(false);
           }
         };
         window.addEventListener('keydown', handleEsc);
@@ -2609,7 +3131,7 @@ const handleSetView = (newView) => {
         
         // If stock is defined and is 0, cannot add
         if (availableStock !== undefined && availableStock <= 0) {
-          alert("This item is out of stock");
+          toast.warning("This item is out of stock");
           return;
         }
         
@@ -2618,14 +3140,13 @@ const handleSetView = (newView) => {
           if (existing) {
             // Check if already at max stock
             if (availableStock !== undefined && existing.qty >= availableStock) {
-              alert("Maximum available stock reached");
+              toast.warning("Maximum available stock reached");
               return prev;
             }
             return prev.map(item => item.id === product.id ? { ...item, qty: item.qty + 1 } : item);
           }
-          // New item - start with qty 1 (or less if stock is low)
-          const initialQty = (availableStock !== undefined && availableStock < 1) ? availableStock : 1;
-          return [...prev, { ...product, qty: initialQty }];
+          // New item - start with qty 1
+          return [...prev, { ...product, qty: 1 }];
         });
       };
 
@@ -2635,7 +3156,7 @@ const handleSetView = (newView) => {
           const availableStock = stockMap[item.name];
           // Prevent exceeding stock
           if (availableStock !== undefined && qty > availableStock) {
-            alert("Maximum available stock reached");
+            toast.warning("Maximum available stock reached");
             return;
           }
           if (qty < 1) qty = 1;
@@ -2648,7 +3169,10 @@ const handleSetView = (newView) => {
       };
 
       const cartCount = cart.reduce((sum, item) => sum + item.qty, 0);
-      const totalPrice = cart.reduce((sum, item) => sum + (parseFloat(item.price.replace(/[^\d.]/g, '')) * item.qty), 0);
+      const totalPrice = cart.reduce((sum, item) => {
+        const price = typeof item.price === 'string' ? parseFloat(item.price.replace(/[^\d.]/g, '')) : parseFloat(item.price) || 0;
+        return sum + (price * item.qty);
+      }, 0);
 
       const renderView = () => {
         return (
@@ -2668,12 +3192,12 @@ const handleSetView = (newView) => {
               {view === 'home' && (
                 <>
                   <Hero />
-                  <ProductSection onSelectProduct={setSelectedProduct} limit={4} title="Featured" stockMap={stockMap} />
+                  <ProductSection onSelectProduct={setSelectedProduct} onPreorder={handlePreorder} limit={4} title="Featured" stockMap={stockMap} />
                   <Values />
                   <ContactSection />
                 </>
               )}
-              {view === 'prints' && <ProductSection onSelectProduct={setSelectedProduct} title="Catalog" stockMap={stockMap} />}
+              {view === 'prints' && <ProductSection onSelectProduct={setSelectedProduct} onPreorder={handlePreorder} title="Catalog" stockMap={stockMap} />}
               {view === 'about' && <AboutUs />}
               {view === 'custom' && <CustomPrintView setView={handleSetView} />}
               {view === 'privacy' && <PrivacyPolicyView />}
@@ -2688,7 +3212,7 @@ const handleSetView = (newView) => {
                   <p className="text-brand-gray/60 mb-12">The requested geometry does not exist in our system.</p>
                   <button onClick={() => setView('home')} className="btn-primary px-12 py-4 rounded-xl font-bold uppercase tracking-widest text-xs">Return Home</button>
                 </div>
-              )}
+              )} 
             </motion.div>
           </AnimatePresence>
         );
@@ -2725,6 +3249,8 @@ const handleSetView = (newView) => {
               product={selectedProduct}
               onClose={() => setSelectedProduct(null)}
               onAddToCart={addToCart}
+              stockMap={stockMap}
+              onPreorder={handlePreorder}
             />
           )}
 
@@ -2749,67 +3275,106 @@ const handleSetView = (newView) => {
             total={totalPrice}
             onSuccess={() => setCart([])}
           />
+
+          <PreorderModal
+            product={preorderProduct}
+            isOpen={isPreorderOpen}
+            onClose={() => {
+              setIsPreorderOpen(false);
+              setPreorderProduct(null);
+            }}
+            toast={toast}
+          />
         </motion.div>
       );
     };
 
     const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
+    root.render(<ToastProvider><App /></ToastProvider>);
 
     // ChromaGrid Vanilla JS Implementation
     (function () {
+      let spotlightCleanup = null;
+
       const initSpotlight = () => {
         const spotlight = document.getElementById('studio-spotlight');
         if (!spotlight) return;
 
-        window.addEventListener('mousemove', (e) => {
-          const { clientX, clientY } = e;
+        // Debounced mousemove handler for performance
+        let ticking = false;
+        const handleMousemove = (e) => {
+          if (!ticking) {
+            window.requestAnimationFrame(() => {
+              const { clientX, clientY } = e;
 
-          // Smooth follow for global spotlight
-          if (window.gsap) {
-            gsap.to(spotlight, {
-              x: clientX,
-              y: clientY,
-              duration: 0.6,
-              ease: 'power3.out',
-              opacity: 1
+              // Smooth follow for global spotlight
+              if (window.gsap) {
+                gsap.to(spotlight, {
+                  x: clientX,
+                  y: clientY,
+                  duration: 0.6,
+                  ease: 'power3.out',
+                  opacity: 1
+                });
+              }
+
+              // Update card spotlight effects
+              const cards = document.querySelectorAll('.chroma-card');
+              cards.forEach(card => {
+                const rect = card.getBoundingClientRect();
+                const x = ((clientX - rect.left) / rect.width) * 100;
+                const y = ((clientY - rect.top) / rect.height) * 100;
+                card.style.setProperty('--mouse-x', `${x}%`);
+                card.style.setProperty('--mouse-y', `${y}%`);
+
+                const centerX = rect.left + rect.width / 2;
+                const centerY = rect.top + rect.height / 2;
+                const distance = Math.sqrt(Math.pow(clientX - centerX, 2) + Math.pow(clientY - centerY, 2));
+
+                if (distance < 450) {
+                  card.classList.add('in-spotlight');
+                } else {
+                  card.classList.remove('in-spotlight');
+                }
+              });
+
+              ticking = false;
             });
+            ticking = true;
           }
-const cards = document.querySelectorAll('.chroma-card');
-        cards.forEach(card => {
-          const rect = card.getBoundingClientRect();
-          const x = ((clientX - rect.left) / rect.width) * 100;
-          const y = ((clientY - rect.top) / rect.height) * 100;
-          card.style.setProperty('--mouse-x', `${x}%`);
-          card.style.setProperty('--mouse-y', `${y}%`);
+        };
 
-          const centerX = rect.left + rect.width / 2;
-          const centerY = rect.top + rect.height / 2;
-          const distance = Math.sqrt(Math.pow(clientX - centerX, 2) + Math.pow(clientY - centerY, 2));
+        window.addEventListener('mousemove', handleMousemove);
 
-          if (distance < 450) {
-            card.classList.add('in-spotlight');
-          } else {
-            card.classList.remove('in-spotlight');
+        const handleMouseleave = () => {
+          if (window.gsap) {
+            gsap.to(spotlight, { opacity: 0, duration: 1 });
           }
+        };
+        window.addEventListener('mouseleave', handleMouseleave);
 
-        });
-      });
+        // Cleanup function to prevent memory leaks
+        spotlightCleanup = () => {
+          window.removeEventListener('mousemove', handleMousemove);
+          window.removeEventListener('mouseleave', handleMouseleave);
+        };
+      };
 
-      window.addEventListener('mouseleave', () => {
-        if (window.gsap) {
-          gsap.to(spotlight, { opacity: 0, duration: 1 });
+      let attempts = 0;
+      const maxAttempts = 100;
+      const checkResources = setInterval(() => {
+        attempts++;
+        if (attempts >= maxAttempts) {
+          clearInterval(checkResources);
+          console.warn('Spotlight init timed out: GSAP or spotlight element not available');
+          return;
         }
-      });
-    };
-
-    const checkResources = setInterval(() => {
-      if (window.gsap && document.getElementById('studio-spotlight')) {
-        clearInterval(checkResources);
-        initSpotlight();
-      }
-    }, 100);
-  })();
+        if (window.gsap && document.getElementById('studio-spotlight')) {
+          clearInterval(checkResources);
+          initSpotlight();
+        }
+      }, 100);
+    })();
   </script>
 </body>
 
